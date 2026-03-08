@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgis/postgis:17-3.5
+    container_name: scythe-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: scythe
+      POSTGRES_PASSWORD: scythe
+      POSTGRES_DB: scythe
+    ports:
+      - "5432:5432"
+    volumes:
+      - scythe_pgdata:/var/lib/postgresql/data
+
+volumes:
+  scythe_pgdata:
