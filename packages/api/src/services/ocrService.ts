@@ -112,6 +112,8 @@ export class ClaudeLlmParser implements OcrParser {
       );
     }
 
+    // Strip markdown code fences if the LLM wrapped the JSON
+    responseText = responseText.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
     const parsed = JSON.parse(responseText);
     const persons: OcrParsedPerson[] = parsed.persons ?? [];
 
@@ -476,6 +478,12 @@ RULES:
 - Leave fields as null rather than guessing when text is truly ambiguous.
 - Inscriptions are epitaphs like "Beloved Father", "Rest in Peace", "Forever in our hearts".
 
+DIGIT ACCURACY — read each digit carefully:
+- Zoom in mentally on each numeral. Engraved digits like 5, 2, 3, 6, and 8 often look similar on weathered stone.
+- "5" has a flat top and a curved bottom; "2" has a curved top and a flat bottom — do not confuse them.
+- Cross-check: if two people on the same stone share a birth year, verify each digit independently — identical birth years for a married couple are uncommon.
+- Cross-check: death date must be after birth date. A person's lifespan should be plausible (typically 0–110 years).
+
 Return ONLY valid JSON (no markdown, no explanation) in this exact format:
 {
   "persons": [
@@ -501,8 +509,29 @@ Return ONLY valid JSON (no markdown, no explanation) in this exact format:
 
 export class ClaudeVisionProcessor implements VisionOcrProcessor {
   async processImage(imageBuffer: Buffer) {
-    const base64Image = imageBuffer.toString('base64');
-    const mediaType = this.detectMediaType(imageBuffer);
+    const sharp = (await import('sharp')).default;
+    const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+    // Enhance image for better OCR: normalize, sharpen, boost contrast
+    let processedBuffer = await sharp(imageBuffer)
+      .normalize()                    // Auto-level contrast
+      .sharpen({ sigma: 1.5 })        // Sharpen engraved text edges
+      .resize({ width: 2048, height: 2048, fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 90 })
+      .toBuffer();
+
+    // Ensure we stay under the 5MB API limit
+    if (processedBuffer.length > MAX_IMAGE_BYTES) {
+      processedBuffer = await sharp(imageBuffer)
+        .normalize()
+        .sharpen({ sigma: 1.5 })
+        .resize({ width: 1536, height: 1536, fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 70 })
+        .toBuffer();
+    }
+
+    const base64Image = processedBuffer.toString('base64');
+    const mediaType = this.detectMediaType(processedBuffer);
 
     let responseText: string;
 
@@ -516,6 +545,8 @@ export class ClaudeVisionProcessor implements VisionOcrProcessor {
       );
     }
 
+    // Strip markdown code fences if the LLM wrapped the JSON
+    responseText = responseText.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
     const parsed = JSON.parse(responseText);
     const persons: OcrParsedPerson[] = parsed.persons ?? [];
     const rawText: string = parsed.rawText ?? '';
